@@ -2,6 +2,6 @@
 
 Запорожець Олександр
 
-Тема 1: Єдині стандарти оформлення коду C++ (Coding Style Guide)
+Єдині стандарти оформлення коду C++ (Coding Style Guide)
 
-Тема 2: Методи рефакторингу коду: 181 - Add Parameter 87 - Split Temporary Variable 161 - Remove Control Flag
+Методи рефакторингу коду: 181 - Add Parameter 87 - Split Temporary Variable 161 - Remove Control Flag
