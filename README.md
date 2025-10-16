@@ -2,6 +2,6 @@
 
 Запорожець Олександр
 
-Мова програмування: C++
+Тема 1: Правила оформлення коду у мові С++
 
-Обрані методи: 181 - Add Parameter 87 - Split Temporary Variable 161 - Remove Control Flag
+Тема 2: Методи рефакторингу коду: 181 - Add Parameter 87 - Split Temporary Variable 161 - Remove Control Flag
