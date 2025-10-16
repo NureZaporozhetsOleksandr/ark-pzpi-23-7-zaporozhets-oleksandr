@@ -4,4 +4,4 @@
 
 Правила оформлення коду C++ за стандартами Google Style Guide
 
-Методи рефакторингу коду: 181 - Add Parameter 87 - Split Temporary Variable 161 - Remove Control Flag
+Методи рефакторингу коду: Add Parameter, Split Temporary Variable, Remove Control Flag згідно стандартів SOLID-принципів на прикладі мови С++
