@@ -6,8 +6,8 @@ const swaggerDocument = {
     description: 'Документація REST API для лабораторної роботи №3'
   },
   servers: [
-    { url: 'http://localhost:3000' }
-  ],
+  { url: '/' }
+],
   components: {
     securitySchemes: {
       BearerAuth: {
