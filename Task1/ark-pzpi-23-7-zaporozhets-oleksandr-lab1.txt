@@ -254,6 +254,9 @@ NameDateReason For ChangesVersionЗапорожець О. О.15.11.25-1.0
 4. надійності зберігання даних — виключення можливості їх втрати або пошкодження.
 
 
+
+ДОДАТОК А
+Посилання на відео: https://youtu.be/ps995UXMOz4
 Vision and Scope for <Project>			Page 7
 
 
