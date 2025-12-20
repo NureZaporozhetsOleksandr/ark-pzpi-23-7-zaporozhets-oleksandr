@@ -1,0 +1,200 @@
+{
+  "version": 1,
+  "author": "Anonymous maker",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "board-esp32-devkit-c-v4",
+      "id": "esp",
+      "top": 9.6,
+      "left": 24.04,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btnStart",
+      "top": 159.8,
+      "left": -163.2,
+      "attrs": {
+        "color": "green",
+        "xray": "1",
+        "label": "START"
+      }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btnEnd",
+      "top": 102.2,
+      "left": -163.2,
+      "attrs": {
+        "color": "red",
+        "xray": "1",
+        "label": "END"
+      }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btnBreakStart",
+      "top": 44.6,
+      "left": -163.2,
+      "attrs": {
+        "color": "yellow",
+        "xray": "1",
+        "label": "BREAK_START"
+      }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btnBreakEnd",
+      "top": -13,
+      "left": -163.2,
+      "attrs": {
+        "color": "blue",
+        "xray": "1",
+        "label": "BREAK_END"
+      }
+    },
+    {
+      "type": "board-ssd1306",
+      "id": "oled",
+      "top": -56,
+      "left": 231,
+      "attrs": {
+        "i2cAddress": "0x3c"
+      }
+    }
+  ],
+  "connections": [
+    [
+      "esp:TX",
+      "$serialMonitor:RX",
+      "",
+      []
+    ],
+    [
+      "esp:RX",
+      "$serialMonitor:TX",
+      "",
+      []
+    ],
+    [
+      "btnStart:1.r",
+      "esp:13",
+      "green",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "btnStart:2.r",
+      "esp:GND.1",
+      "red",
+      [
+        "v29",
+        "h115.4",
+        "v-38.4",
+        "h-9.6",
+        "v-19.2"
+      ]
+    ],
+    [
+      "btnEnd:1.r",
+      "esp:12",
+      "green",
+      [
+        "h19.4",
+        "v38.4"
+      ]
+    ],
+    [
+      "btnEnd:2.r",
+      "esp:GND.1",
+      "red",
+      [
+        "h96.2",
+        "v29"
+      ]
+    ],
+    [
+      "btnBreakStart:1.r",
+      "esp:14",
+      "green",
+      [
+        "h19.4",
+        "v28.8",
+        "h86",
+        "v57.6"
+      ]
+    ],
+    [
+      "btnBreakStart:2.r",
+      "esp:GND.1",
+      "red",
+      [
+        "h57.8",
+        "v86.6"
+      ]
+    ],
+    [
+      "btnBreakEnd:1.r",
+      "esp:27",
+      "green",
+      [
+        "h77",
+        "v115.2",
+        "h38.4",
+        "v19.2"
+      ]
+    ],
+    [
+      "btnBreakEnd:2.r",
+      "esp:GND.1",
+      "red",
+      [
+        "h29",
+        "v144.2"
+      ]
+    ],
+    [
+      "oled:GND",
+      "esp:GND.1",
+      "black",
+      [
+        "v-36.86",
+        "h114.83",
+        "v249.6"
+      ]
+    ],
+    [
+      "oled:VCC",
+      "esp:3V3",
+      "red",
+      [
+        "h-134.62",
+        "v20.74",
+        "h-115.35"
+      ]
+    ],
+    [
+      "oled:SDA",
+      "esp:21",
+      "blue",
+      [
+        "v-17.66",
+        "h66.9",
+        "v153.6"
+      ]
+    ],
+    [
+      "oled:SCL",
+      "esp:22",
+      "green",
+      [
+        "v-17.66",
+        "h-96.07",
+        "v124.8"
+      ]
+    ]
+  ],
+  "dependencies": {}
+}
