@@ -1,0 +1,795 @@
+﻿МІНІСТЕРСТВО ОСВІТИ І НАУКИ УКРАЇНИ
+
+
+ХАРКІВСЬКИЙ НАЦІОНАЛЬНИЙ УНІВЕРСИТЕТ РАДІОЕЛЕКТРОНІКИ
+
+Кафедра «Програмна інженерія»
+
+
+
+
+ЗВІТ
+з лаборіторної роботи №4
+з дисципліни «Аналіз та рефакторинг коду»
+на тему «Розробка IoT клієнта (бізнес-логіки та функцій налаштування)»
+
+
+
+
+
+
+
+
+
+
+Виконав:                                                           Прийняв:
+ст. гр. ПЗПІ-23-7                                              асистент. каф. ПІ. Дашенков Д. С.
+Запорожець О.О.
+
+
+
+
+
+Харків 2025
+       4.1 Мета роботи
+     Метою лабораторної роботи є розробка IoT/SmartDevice клієнта, який є складовою частиною інформаційної системи та забезпечує взаємодію з серверною частиною з використанням сучасних протоколів. Додатково необхідно реалізувати бізнес-логіку обробки подій, функції налаштування IoT-клієнта, побудувати UML-діаграми прецедентів і діяльності, а також провести перевірку коректності роботи реалізованого рішення в режимі симуляції.
+       4.2 Інженерні рішення
+     Для реалізації IoT-клієнта обрано мікроконтролер ESP32 у вигляді симуляції Wokwi, оскільки він підтримує Wi-Fi та дозволяє відтворити типову архітектуру “розумного” пристрою без використання фізичного обладнання. IoT-клієнт реалізовано у форматі термінала відміток робочого часу, який генерує події початку/завершення роботи та перерви. Такий підхід напряму відповідає предметній області системи моніторингу робочого часу: події термінала семантично відповідають діям, які у веб-версії системи створюють записи обліку часу.
+     Для введення подій використано чотири кнопки. Підключення реалізовано в режимі INPUT_PULLUP (внутрішня підтяжка до логічної “1”), а натискання визначається як перехід у “0” при замиканні на GND. Це дозволяє уникнути зовнішніх резисторів, спростити схему та підвищити стабільність зчитування. Щоб уникнути багаторазових спрацьовувань, застосовано детекцію фронту натискання (реакція лише на зміну HIGH→LOW).
+     Ключовим елементом є автомат станів (IDLE/WORK/BREAK), який забезпечує правильні переходи та забороняє некоректні сценарії (наприклад, повторний START під час WORK або BREAK_END без активної перерви). Такий підхід спрощує валідацію дій і робить поведінку пристрою прогнозованою.
+     Математична обробка даних предметної області реалізована через облік часу: пристрій фіксує момент старту роботи, накопичує тривалість перерв, а “чистий” робочий час обчислює як різницю між загальною тривалістю зміни та сумарним часом перерв. Під час завершення зміни формуються workedMinutes і breakMinutes, що напряму використовується в домені обліку робочого часу.
+     Для взаємодії з сервером використано передачу подій у форматі JSON через Wi-Fi по HTTP POST, що є типовим сучасним способом інтеграції IoT-клієнтів з веб-сервісами. Додатково реалізовано OFFLINE-режим як заглушку: якщо endpoint не заданий, відправка імітується з фіксацією умовного коду, що дозволяє продемонструвати роботу без розгортання реального серверу. Для надійності в разі невдалої відправки події буферизуються у локальній черзі та повторно відправляються з інтервалом, що моделює поведінку IoT-пристрою в умовах нестабільної мережі.
+     Для підвищення зрозумілості роботи пристрою використано OLED SSD1306 (I2C), на якому відображаються поточний стан, таймери Work/Break, остання подія та статуси Wi-Fi/HTTP/черги. Це дає можливість візуально підтвердити коректність логіки під час тестування та демонстрації.
+       4.3 Хід роботи
+     ІоТ-клієнт було реалізовано у середовищі симуляції Wokwi, що дозволяє моделювати роботу мікроконтролера та підключеної периферії у режимі реального часу без використання фізичного обладнання. Симуляція використовується як етап прототипування та перевірки бізнес-логіки IoT-клієнта, який є частиною мого проєкту системи моніторингу робочого часу співробітників.
+     У якості основної апаратної платформи використано мікроконтролер ESP32 DevKit (див. Рисунок 4.1).
+     У створеному IoT-клієнті реалізовано апаратні компоненти (див. Рисунок 4.1):
+      • ESP32 DevKit — обчислювальна платформа з підтримкою Wi-Fi;
+      • 4 кнопки керування для введення подій предметної області:
+          • START — початок робочого часу,
+          • END — завершення робочого часу,
+          • BREAK_START — початок перерви,
+          • BREAK_END — завершення перерви;
+       • OLED SSD1306 (128×64, I2C) — дисплей для відображення поточного стану та таймерів роботи/перерви.
+     Підключення кнопок виконано у режимі INPUT_PULLUP: кожна кнопка підключена між відповідним GPIO та загальним GND, а натискання визначається як перехід сигналу в LOW при замиканні на “землю”. Це дозволяє уникнути зовнішніх підтягувальних резисторів та спростити схему. Вхідні піни для кнопок обрані відповідно до реалізації: START → GPIO13, END → GPIO12, BREAK_START → GPIO14, BREAK_END → GPIO27 (див. Рисунок 1).
+     OLED-дисплей підключено по шині I2C: SDA → GPIO21, SCL → GPIO22, VCC → 3V3 (або 5V залежно від модуля), GND → GND. Дисплей використовується як інтерфейс індикації: відображає стан пристрою, таймери та службові статуси 
+     Після створення схеми (diagram.json) у середовищі Wokwi було реалізовано програмну частину IoT-клієнта (sketch.ino), що складається з логічних блоків:
+       • введення (обробка натискань кнопок з детекцією фронту);
+       • автомат станів (IDLE / WORK / BREAK) для керування допустимими переходами;
+       • бізнес-логіка обліку часу (математична обробка даних предметної області);
+       • формування повідомлень у форматі JSON;
+       • налаштування IoT-клієнта через Serial-команди (CFG URL/USER/DEV);
+       • мережна взаємодія по Wi-Fi (HTTP POST) або режим симуляції OFFLINE;
+       • офлайн-буферизація (черга подій) та повторні спроби відправлення;
+       • індикація на OLED та журналювання у Serial Monitor.
+       • Створений функціонал IoT-клієнта (див. Рисунок 3–4):
+       • зчитування подій предметної області через кнопки (START/END/BREAK_START/BREAK_END);
+       • перевірка коректності сценаріїв через автомат станів (наприклад, заборона повторного START під час WORK; заборона BREAK_END без активної перерви);
+       • математична обробка часових даних: обчислення тривалості перерв та “чистого” часу роботи як (тривалість зміни − сумарний час перерв), з подальшим перетворенням у workedMinutes і breakMinutes при завершенні зміни;
+       • виведення на OLED поточного стану (IDLE/WORK/BREAK), таймерів Work/Break у форматі мм:сс, останньої події (Last) та технічних статусів (Wi-Fi, HTTP-код або код симуляції, кількість подій у черзі);
+       • формування JSON-структури події, що містить deviceId, userId, type, state, workedMinutes, breakMinutes та часову мітку (tsMs) для подальшої інтеграції з бекендом;
+       • налаштування IoT-клієнта через Serial Monitor: зміна endpoint (URL або OFFLINE), userId та deviceId командами CFG, з можливістю перегляду параметрів через STATUS;
+       • імітація мережної взаємодії: у режимі HTTP події надсилаються на endpoint методом POST, у режимі OFFLINE відправка симулюється (для ситуацій без реального URL), при цьому формат даних та бізнес-логіка зберігаються;
+       • надійність передачі: при невдалій відправці подія не втрачається, а додається в офлайн-чергу та надсилається повторно з інтервалом.
+     У результаті отримано працюючий IoT-клієнт “Термінал відміток часу”, який є логічним продовженням і частиною мого проєкту: він генерує події обліку робочого часу в тому ж сенсі, що і веб-клієнт, але реалізований як SmartDevice-клієнт із власним інтерфейсом (кнопки + OLED), бізнес-логікою, налаштуваннями та протоколом взаємодії 
+     
+
+Рис. 4.1. – Схема IoT-клієнта (ESP32 + кнопки + OLED) у Wokwi
+
+Рис. 4.2. – Данні з консолі
+
+
+
+
+Рис. 4.3. – Діаграма прецедентів (Use Case)
+     На діаграмі прецедентів показано зовнішні ролі та функції IoT-клієнта “Термінал обліку часу”, а також його взаємодію з сервером. Основним актором є Працівник, який виконує предметні дії: почати роботу, завершити роботу, почати перерву, завершити перерву. Кожна з цих дій у системі приводить до формування події та її подальшої обробки: IoT-клієнт обробляє подію (перевіряє правила переходів між станами IDLE/WORK/BREAK та виконує розрахунки часу), оновлює індикацію на OLED та формує JSON-повідомлення для передачі.
+     Окремим актором є Адміністратор, який має прецедент налаштувати пристрій (задання URL endpoint, userId та deviceId). Наявність цього прецеденту відображає вимогу методички щодо підтримки налаштувань IoT-клієнта без зміни програмного коду.
+     Взаємодія з Сервером (API) відображена прецедентом “Надіслати подію на сервер (HTTP POST)”. Діаграма також показує альтернативну поведінку при відсутності зв’язку або помилці: якщо пристрій працює в режимі OFFLINE або передача неуспішна, подія зберігається в офлайн-чергу для подальшої повторної відправки. Таким чином, діаграма прецедентів відображає як функціональні можливості IoT-клієнта (виконання “відміток”), так і інтеграційні аспекти (формат JSON, HTTP POST, офлайн-буферизація) та підтримку адміністрування (конфігурація).
+
+
+Рис. 4.4. – Діаграма діяльності (Activity)
+     Діаграма діяльності деталізує алгоритм роботи IoT-клієнта як послідовність кроків від натискання кнопки до відображення результату й (за потреби) передачі події на сервер. Процес починається зі зчитування натискань кнопок. Якщо події немає, цикл продовжується без змін. Якщо подія є, виконується валідація переходу станів (перевірка, чи дозволена дія у поточному стані IDLE/WORK/BREAK).
+     Якщо дія не дозволена, IoT-клієнт формує відмову (denied), після чого оновлює OLED, щоб користувач бачив результат. Якщо дія дозволена, пристрій оновлює стан (IDLE/WORK/BREAK), оновлює таймери Work/Break (предметна математична обробка часу), та формує JSON-повідомлення події.
+     Далі діаграма показує розгалуження залежно від режиму роботи: якщо URL=OFFLINE, то виконується симуляція успішної відправки (для демонстрації роботи без реального endpoint). Якщо режим онлайн, виконується HTTP POST (JSON) по Wi-Fi. У разі успіху відправка підтверджується, а у разі помилки — подія додається в офлайн-чергу. Після завершення мережного кроку (або симуляції) пристрій оновлює OLED (стан/таймери/статуси), щоб користувач бачив актуальну інформацію.
+     Окремо внизу діаграми винесено фонову поведінку: періодично IoT-клієнт намагається відправити події з офлайн-черги, що моделює надійну роботу пристрою при нестабільному зв’язку. Таким чином, activity-діаграма повністю відображає логіку обробки подій, математичні обчислення часу та сценарії online/offline, а також підтверджує наявність інженерних рішень для надійності (черга + повторна відправка) і зрозумілої індикації (OLED).
+
+       4.4 Висновок
+     У ході виконання лабораторної роботи №4 було розроблено IoT/SmartDevice клієнт у середовищі симуляції Wokwi на базі ESP32 DevKit із підключенням 4 кнопок керування (START/END/BREAK_START/BREAK_END) та OLED SSD1306 для індикації стану і таймерів. 
+     Реалізовано бізнес-логіку термінала обліку часу на основі автомата станів IDLE/WORK/BREAK, перевірку коректності сценаріїв та математичну обробку часових даних (обчислення тривалості перерв і “чистого” робочого часу), а також формування структурованих подій у форматі JSON для подальшої інтеграції з бекендом. 
+     Також реалізовано функції налаштування IoT-клієнта через Serial-команди (CFG URL/USER/DEV), мережеву взаємодію по Wi-Fi з надсиланням подій методом HTTP POST або роботу в режимі OFFLINE (заглушка), а для підвищення надійності — офлайн-чергу з повторними спробами відправлення. 
+     Додатково побудовано UML діаграму прецедентів та UML діаграму діяльності, які відображають взаємодію акторів з IoT-клієнтом і покроковий алгоритм обробки подій, що відповідає вимогам методичних вказівок. 
+
+
+Додаток А
+Програмний код IoT клієнта
+
+sketch.ino:
+
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <ArduinoJson.h>
+
+// ===== OLED =====
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+const int I2C_SDA = 21;
+const int I2C_SCL = 22;
+
+// ===== WiFi (Wokwi) =====
+const char* WIFI_SSID = "Wokwi-GUEST";
+const char* WIFI_PASS = "";
+
+// ===== Buttons =====
+const int PIN_START       = 13;
+const int PIN_END         = 12;
+const int PIN_BREAK_START = 14;
+const int PIN_BREAK_END   = 27;
+
+// ===== Persistent HTTP clients (IMPORTANT FIX) =====
+WiFiClient plainClient;
+WiFiClientSecure tlsClient;
+
+// ===== Device / Auth / Backend config =====
+String DEVICE_ID = "ESP32-TIME-TERM-01";
+
+String API_BASE = "OFFLINE";  // "OFFLINE" or "http(s)://..."
+String JWT_TOKEN = "";        // Bearer token
+String AUTH_EMAIL = "";       // we'll treat as "login" for backend
+String AUTH_PASS = "";        // password
+
+// MODE=API -> uses /api/time-entries/*
+// MODE=RAW -> sends to IOT_PATH (still with JWT)
+String MODE = "API";
+String IOT_PATH = "/api/iot/events";
+
+// ===== State machine =====
+enum WorkState { IDLE, WORKING, ON_BREAK };
+WorkState state = IDLE;
+
+// ===== Timing =====
+unsigned long workStartMs = 0;
+unsigned long breakStartMs = 0;
+unsigned long totalBreakMs = 0;
+
+// ===== Last event / status =====
+String lastEvent = "-";
+int lastHttpCode = 0;
+String lastHttpMsg = "";
+
+// ===== Offline queue =====
+struct EventItem {
+  String urlPath;
+  String json;
+  bool needsAuth;
+};
+EventItem queueBuf[10];
+int qHead = 0, qTail = 0;
+
+bool queueIsEmpty() { return qHead == qTail; }
+bool queueIsFull() { return ((qTail + 1) % 10) == qHead; }
+
+int queueCount() {
+  if (qTail >= qHead) return qTail - qHead;
+  return 10 - (qHead - qTail);
+}
+
+void enqueue(const String& urlPath, const String& json, bool needsAuth) {
+  if (queueIsFull()) qHead = (qHead + 1) % 10;
+  queueBuf[qTail].urlPath = urlPath;
+  queueBuf[qTail].json = json;
+  queueBuf[qTail].needsAuth = needsAuth;
+  qTail = (qTail + 1) % 10;
+}
+
+bool dequeue(EventItem& out) {
+  if (queueIsEmpty()) return false;
+  out = queueBuf[qHead];
+  qHead = (qHead + 1) % 10;
+  return true;
+}
+
+// ===== Helpers =====
+String stateShort() {
+  if (state == IDLE) return "IDLE";
+  if (state == WORKING) return "WORK";
+  return "BREAK";
+}
+
+String two(int v) { return (v < 10 ? "0" : "") + String(v); }
+
+String fmtMmSs(unsigned long ms) {
+  unsigned long sec = ms / 1000UL;
+  int mm = (int)(sec / 60UL);
+  int ss = (int)(sec % 60UL);
+  return two(mm) + ":" + two(ss);
+}
+
+unsigned long currentBreakMs() {
+  if (state == ON_BREAK) return totalBreakMs + (millis() - breakStartMs);
+  return totalBreakMs;
+}
+
+unsigned long currentWorkNetMs() {
+  if (state == IDLE) return 0;
+  unsigned long worked = millis() - workStartMs;
+  unsigned long br = currentBreakMs();
+  if (worked > br) return worked - br;
+  return 0;
+}
+
+String joinUrl(const String& base, const String& path) {
+  if (base.endsWith("/") && path.startsWith("/")) return base.substring(0, base.length() - 1) + path;
+  if (!base.endsWith("/") && !path.startsWith("/")) return base + "/" + path;
+  return base + path;
+}
+
+String makeEventJson(const String& type, long workedMinutes, long breakMinutes) {
+  StaticJsonDocument<256> doc;
+  doc["deviceId"] = DEVICE_ID;
+  doc["type"] = type;
+  doc["state"] = stateShort();
+  doc["workedMinutes"] = workedMinutes;
+  doc["breakMinutes"] = breakMinutes;
+  doc["tsMs"] = (unsigned long)millis();
+
+  String out;
+  serializeJson(doc, out);
+  return out;
+}
+
+String endpointForType(const String& type) {
+  if (MODE == "RAW") return IOT_PATH;
+
+  if (type == "START_WORK") return "/api/time-entries/start-work";
+  if (type == "END_WORK") return "/api/time-entries/end-work";
+  if (type == "BREAK_START") return "/api/time-entries/break-start";
+  if (type == "BREAK_END") return "/api/time-entries/break-end";
+  return IOT_PATH;
+}
+
+bool hasUsableBase() {
+  return !(API_BASE == "" || API_BASE == "OFFLINE");
+}
+
+// ===== HTTP (supports OFFLINE) =====
+bool httpPostJson(const String& url, const String& json, bool addAuth) {
+  lastHttpMsg = "";
+
+  if (!hasUsableBase()) {
+    lastHttpCode = 299;
+    Serial.println("[SIM] OFFLINE mode: event stored/printed");
+    Serial.print("[SIM] url="); Serial.println(url);
+    Serial.print("[SIM] payload="); Serial.println(json);
+    return true;
+  }
+
+  if (WiFi.status() != WL_CONNECTED) return false;
+
+  HTTPClient http;
+  int code = -1;
+  String resp;
+
+  // IMPORTANT FIX: use persistent clients (tlsClient/plainClient)
+  if (url.startsWith("https://")) {
+    http.begin(tlsClient, url);
+  } else {
+    http.begin(plainClient, url);
+  }
+
+  http.addHeader("Content-Type", "application/json");
+  if (addAuth && JWT_TOKEN.length() > 0) {
+    http.addHeader("Authorization", "Bearer " + JWT_TOKEN);
+  }
+
+  Serial.print("[HTTP] POST ");
+  Serial.println(url);
+
+  code = http.POST(json);
+  resp = http.getString();
+  http.end();
+
+  lastHttpCode = code;
+  lastHttpMsg = resp;
+
+  Serial.print("[HTTP] code="); Serial.print(code);
+  if (resp.length() > 0) {
+    Serial.print(" resp=");
+    Serial.println(resp);
+  } else {
+    Serial.println();
+  }
+
+  return code >= 200 && code < 300;
+}
+
+// avoid spam
+unsigned long lastQueueTryMs = 0;
+
+void flushQueueIfPossible() {
+  if (!hasUsableBase()) return;
+
+  unsigned long now = millis();
+  if (now - lastQueueTryMs < 2000) return;
+  lastQueueTryMs = now;
+
+  if (queueIsEmpty()) return;
+
+  EventItem item;
+  if (!dequeue(item)) return;
+
+  if (item.needsAuth && JWT_TOKEN.length() == 0) {
+    enqueue(item.urlPath, item.json, item.needsAuth);
+    return;
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    enqueue(item.urlPath, item.json, item.needsAuth);
+    return;
+  }
+
+  String url = joinUrl(API_BASE, item.urlPath);
+  Serial.println("[QUEUE] sending stored event...");
+  if (!httpPostJson(url, item.json, item.needsAuth)) {
+    Serial.println("[QUEUE] failed, put back");
+    enqueue(item.urlPath, item.json, item.needsAuth);
+  } else {
+    Serial.println("[QUEUE] sent");
+  }
+}
+
+// ===== OLED UI (2 pages, auto rotate) =====
+int page = 0;
+unsigned long lastPageSwitchMs = 0;
+unsigned long lastOledTickMs = 0;
+
+String shortDevId() {
+  if (DEVICE_ID.length() <= 10) return DEVICE_ID;
+  return DEVICE_ID.substring(0, 10) + "..";
+}
+
+String shortBase() {
+  if (!hasUsableBase()) return "OFFLINE";
+  if (API_BASE.length() <= 16) return API_BASE;
+  return API_BASE.substring(0, 16) + "..";
+}
+
+String shortMode() {
+  if (MODE == "API") return "API";
+  return "RAW";
+}
+
+void drawSummary() {
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(2);
+  display.setCursor(0, 0);
+  display.print(stateShort());
+
+  display.setTextSize(1);
+  display.setCursor(0, 22);
+  display.print("Work ");
+  display.print(fmtMmSs(currentWorkNetMs()));
+
+  display.setCursor(0, 34);
+  display.print("Break ");
+  display.print(fmtMmSs(currentBreakMs()));
+
+  display.setCursor(0, 46);
+  display.print("Last ");
+  display.print(lastEvent);
+
+  display.setCursor(0, 56);
+  display.print("WiFi:");
+  display.print((WiFi.status() == WL_CONNECTED) ? "OK" : "NO");
+  display.print(" H:");
+  display.print(lastHttpCode);
+  display.print(" Q:");
+  display.print(queueCount());
+}
+
+void drawConfig() {
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(1);
+
+  display.setCursor(0, 0);
+  display.print("CFG ");
+
+  display.setCursor(0, 12);
+  display.print("Dev : ");
+  display.print(shortDevId());
+
+  display.setCursor(0, 24);
+  display.print("Base: ");
+  display.print(shortBase());
+
+  display.setCursor(0, 36);
+  display.print("Mode: ");
+  display.print(shortMode());
+
+  display.setCursor(0, 48);
+  display.print("Auth: ");
+  display.print(JWT_TOKEN.length() > 0 ? "TOKEN" : "NONE");
+
+  display.setCursor(0, 58);
+  display.print("Type HELP / STATUS");
+}
+
+void oledRender(bool force = false) {
+  unsigned long now = millis();
+
+  if (!force && now - lastOledTickMs < 200) return;
+  lastOledTickMs = now;
+
+  if (now - lastPageSwitchMs > 5000) {
+    page = (page + 1) % 2;
+    lastPageSwitchMs = now;
+  }
+
+  display.clearDisplay();
+  if (page == 0) drawSummary();
+  else drawConfig();
+  display.display();
+}
+
+// ===== Serial commands =====
+void printHelp() {
+  Serial.println("Commands:");
+  Serial.println("  CFG BASE=OFFLINE | http://... | https://...");
+  Serial.println("  CFG MODE=API | RAW");
+  Serial.println("  CFG IOTPATH=/api/iot/events        (for MODE=RAW)");
+  Serial.println("  CFG TOKEN=<jwt>                    (set Bearer token)");
+  Serial.println("  CFG EMAIL=<login>                  (for LOGIN: treated as login)");
+  Serial.println("  CFG PASS=<password>                (for LOGIN)");
+  Serial.println("  LOGIN                              (POST /api/auth/login)");
+  Serial.println("  STATUS");
+  Serial.println("  HELP");
+}
+
+void printStatus() {
+  Serial.print("[STATUS] WiFi=");
+  Serial.println(WiFi.status() == WL_CONNECTED ? "CONNECTED" : "DISCONNECTED");
+  Serial.print("[STATUS] state="); Serial.println(stateShort());
+  Serial.print("[STATUS] BASE="); Serial.println(API_BASE);
+  Serial.print("[STATUS] MODE="); Serial.println(MODE);
+  Serial.print("[STATUS] IOTPATH="); Serial.println(IOT_PATH);
+  Serial.print("[STATUS] DEV="); Serial.println(DEVICE_ID);
+  Serial.print("[STATUS] token="); Serial.println(JWT_TOKEN.length() > 0 ? "(set)" : "(none)");
+  Serial.print("[STATUS] queueCount="); Serial.println(queueCount());
+}
+
+bool doLogin() {
+  if (!hasUsableBase()) {
+    Serial.println("[AUTH] BASE=OFFLINE, login skipped");
+    return false;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[AUTH] no WiFi");
+    return false;
+  }
+  if (AUTH_EMAIL.length() == 0 || AUTH_PASS.length() == 0) {
+    Serial.println("[AUTH] set EMAIL(login) and PASS first");
+    return false;
+  }
+
+  // FIX: your backend uses { login, password }
+  StaticJsonDocument<256> doc;
+  doc["login"] = AUTH_EMAIL;     // treat EMAIL field as "login"
+  doc["password"] = AUTH_PASS;
+
+  String body;
+  serializeJson(doc, body);
+
+  String url = joinUrl(API_BASE, "/api/auth/login");
+
+  if (!httpPostJson(url, body, false)) {
+    Serial.println("[AUTH] login failed");
+    return false;
+  }
+
+  StaticJsonDocument<512> respDoc;
+  DeserializationError err = deserializeJson(respDoc, lastHttpMsg);
+  if (err) {
+    Serial.println("[AUTH] can't parse response JSON");
+    return false;
+  }
+
+  const char* t1 = respDoc["token"];
+  const char* t2 = respDoc["accessToken"];
+  if (t1 && String(t1).length() > 0) JWT_TOKEN = String(t1);
+  else if (t2 && String(t2).length() > 0) JWT_TOKEN = String(t2);
+  else {
+    Serial.println("[AUTH] token field not found in response");
+    return false;
+  }
+
+  Serial.println("[AUTH] token set");
+  oledRender(true);
+  return true;
+}
+
+void handleSerial() {
+  if (!Serial.available()) return;
+
+  String line = Serial.readStringUntil('\n');
+  line.trim();
+  if (line.length() == 0) return;
+
+  if (line == "HELP") { printHelp(); return; }
+  if (line == "STATUS") { printStatus(); oledRender(true); return; }
+  if (line == "LOGIN") { doLogin(); return; }
+
+  if (!line.startsWith("CFG ")) {
+    Serial.println("[SER] unknown command. Type HELP");
+    return;
+  }
+
+  String kv = line.substring(4);
+  int eq = kv.indexOf('=');
+  if (eq < 0) {
+    Serial.println("[CFG] invalid. Example: CFG BASE=OFFLINE");
+    return;
+  }
+
+  String key = kv.substring(0, eq);
+  String val = kv.substring(eq + 1);
+  key.trim();
+  val.trim();
+
+  if (key == "BASE") API_BASE = val;
+  else if (key == "MODE") MODE = val;
+  else if (key == "IOTPATH") IOT_PATH = val;
+  else if (key == "TOKEN") JWT_TOKEN = val;
+  else if (key == "EMAIL") AUTH_EMAIL = val;   // treated as login
+  else if (key == "PASS") AUTH_PASS = val;
+  else if (key == "DEV") DEVICE_ID = val;
+  else {
+    Serial.println("[CFG] unknown key. Use BASE/MODE/IOTPATH/TOKEN/EMAIL/PASS/DEV");
+    return;
+  }
+
+  Serial.println("[CFG] updated");
+  printStatus();
+  oledRender(true);
+}
+
+// ===== Business logic =====
+void sendOrQueue(const String& tag, const String& type, long workedMin, long breakMin) {
+  lastEvent = tag;
+
+  String urlPath = endpointForType(type);
+  String json = makeEventJson(type, workedMin, breakMin);
+
+  Serial.print("[EV] "); Serial.print(type);
+  Serial.print(" -> "); Serial.println(urlPath);
+  Serial.println(json);
+
+  // IMPORTANT: for both API and RAW we usually need JWT
+  bool needsAuth = hasUsableBase();
+
+  if (!hasUsableBase()) {
+    enqueue(urlPath, json, needsAuth);
+    lastHttpCode = 299;
+    oledRender(true);
+    return;
+  }
+
+  if (needsAuth && JWT_TOKEN.length() == 0) {
+    Serial.println("[EV] no token, queued");
+    enqueue(urlPath, json, needsAuth);
+    lastHttpCode = 498;
+    oledRender(true);
+    return;
+  }
+
+  String url = joinUrl(API_BASE, urlPath);
+  if (!httpPostJson(url, json, needsAuth)) {
+    enqueue(urlPath, json, needsAuth);
+  }
+
+  oledRender(true);
+}
+
+void onStartWork() {
+  if (state != IDLE) {
+    Serial.println("[BL] StartWork denied");
+    lastEvent = "DENY_START";
+    oledRender(true);
+    return;
+  }
+  state = WORKING;
+  workStartMs = millis();
+  totalBreakMs = 0;
+  sendOrQueue("START", "START_WORK", 0, 0);
+}
+
+void onEndWork() {
+  if (state == IDLE) {
+    Serial.println("[BL] EndWork denied");
+    lastEvent = "DENY_END";
+    oledRender(true);
+    return;
+  }
+
+  if (state == ON_BREAK) totalBreakMs += (millis() - breakStartMs);
+
+  unsigned long workedMs = (millis() - workStartMs);
+  long breakMin = (long)(totalBreakMs / 60000UL);
+  long workedMin = (long)((workedMs > totalBreakMs ? (workedMs - totalBreakMs) : 0) / 60000UL);
+
+  state = IDLE;
+  sendOrQueue("END", "END_WORK", workedMin, breakMin);
+}
+
+void onBreakStart() {
+  if (state != WORKING) {
+    Serial.println("[BL] BreakStart denied");
+    lastEvent = "DENY_BS";
+    oledRender(true);
+    return;
+  }
+  state = ON_BREAK;
+  breakStartMs = millis();
+  sendOrQueue("B+ ", "BREAK_START", 0, (long)(totalBreakMs / 60000UL));
+}
+
+void onBreakEnd() {
+  if (state != ON_BREAK) {
+    Serial.println("[BL] BreakEnd denied");
+    lastEvent = "DENY_BE";
+    oledRender(true);
+    return;
+  }
+  totalBreakMs += (millis() - breakStartMs);
+  state = WORKING;
+  sendOrQueue("B- ", "BREAK_END", 0, (long)(totalBreakMs / 60000UL));
+}
+
+// ===== Buttons edge detect =====
+bool prevStart = true, prevEnd = true, prevBS = true, prevBE = true;
+
+void connectWiFiWithTimeout(unsigned long timeoutMs) {
+  Serial.println("Connecting WiFi...");
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED && (millis() - start) < timeoutMs) {
+    delay(200);
+    Serial.print(".");
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nWiFi connected.");
+    Serial.print("IP: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("\nWiFi connect timeout (offline allowed).");
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(PIN_START, INPUT_PULLUP);
+  pinMode(PIN_END, INPUT_PULLUP);
+  pinMode(PIN_BREAK_START, INPUT_PULLUP);
+  pinMode(PIN_BREAK_END, INPUT_PULLUP);
+
+  Wire.begin(I2C_SDA, I2C_SCL);
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println("SSD1306 allocation failed");
+  }
+
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.println("Time Terminal");
+  display.println("Booting...");
+  display.display();
+
+  // IMPORTANT: configure TLS client once
+  tlsClient.setInsecure();
+
+  connectWiFiWithTimeout(7000);
+
+  printHelp();
+  printStatus();
+
+  lastPageSwitchMs = millis();
+  oledRender(true);
+}
+
+void loop() {
+  handleSerial();
+  flushQueueIfPossible();
+
+  bool curStart = digitalRead(PIN_START);
+  bool curEnd   = digitalRead(PIN_END);
+  bool curBS    = digitalRead(PIN_BREAK_START);
+  bool curBE    = digitalRead(PIN_BREAK_END);
+
+  if (prevStart && !curStart) onStartWork();
+  if (prevEnd   && !curEnd)   onEndWork();
+  if (prevBS    && !curBS)    onBreakStart();
+  if (prevBE    && !curBE)    onBreakEnd();
+
+  prevStart = curStart;
+  prevEnd = curEnd;
+  prevBS = curBS;
+  prevBE = curBE;
+
+  oledRender(false);
+  delay(30);
+}
+
+
+diagram.json:
+{
+  "version": 1,
+  "author": "Anonymous maker",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": 9.6, "left": 24.04, "attrs": {} },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btnStart",
+      "top": 159.8,
+      "left": -163.2,
+      "attrs": { "color": "green", "xray": "1", "label": "START" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btnEnd",
+      "top": 102.2,
+      "left": -163.2,
+      "attrs": { "color": "red", "xray": "1", "label": "END" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btnBreakStart",
+      "top": 44.6,
+      "left": -163.2,
+      "attrs": { "color": "yellow", "xray": "1", "label": "BREAK_START" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btnBreakEnd",
+      "top": -13,
+      "left": -163.2,
+      "attrs": { "color": "blue", "xray": "1", "label": "BREAK_END" }
+    },
+    {
+      "type": "board-ssd1306",
+      "id": "oled",
+      "top": -56,
+      "left": 231,
+      "attrs": { "i2cAddress": "0x3c" }
+    }
+  ],
+  "connections": [
+    [ "esp:TX", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX", "$serialMonitor:TX", "", [] ],
+    [ "btnStart:1.r", "esp:13", "green", [ "v0" ] ],
+    [ "btnStart:2.r", "esp:GND.1", "red", [ "v29", "h115.4", "v-38.4", "h-9.6", "v-19.2" ] ],
+    [ "btnEnd:1.r", "esp:12", "green", [ "h19.4", "v38.4" ] ],
+    [ "btnEnd:2.r", "esp:GND.1", "red", [ "h96.2", "v29" ] ],
+    [ "btnBreakStart:1.r", "esp:14", "green", [ "h19.4", "v28.8", "h86", "v57.6" ] ],
+    [ "btnBreakStart:2.r", "esp:GND.1", "red", [ "h57.8", "v86.6" ] ],
+    [ "btnBreakEnd:1.r", "esp:27", "green", [ "h77", "v115.2", "h38.4", "v19.2" ] ],
+    [ "btnBreakEnd:2.r", "esp:GND.1", "red", [ "h29", "v144.2" ] ],
+    [ "oled:GND", "esp:GND.1", "black", [ "v-36.86", "h114.83", "v249.6" ] ],
+    [ "oled:VCC", "esp:3V3", "red", [ "h-134.62", "v20.74", "h-115.35" ] ],
+    [ "oled:SDA", "esp:21", "blue", [ "v-17.66", "h66.9", "v153.6" ] ],
+    [ "oled:SCL", "esp:22", "green", [ "v-17.66", "h-96.07", "v124.8" ] ]
+  ],
+  "dependencies": {}
+}
+
+
+
+ДОДАТОК Б
+Посилання на відео: https://youtu.be/sepvV6W1bbw
