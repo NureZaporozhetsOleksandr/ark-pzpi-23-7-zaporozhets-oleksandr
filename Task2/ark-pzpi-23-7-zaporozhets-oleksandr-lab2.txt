@@ -549,6 +549,11 @@ CREATE TABLE AuditLogs (
     NewValue TEXT,
     FOREIGN KEY (UserId) REFERENCES Users(Id)
 );
+
+
+
+ДОДАТОК Б
+Посилання на відео: https://youtu.be/sepvV6W1bbw
 Vision and Scope for <Project>			Page 7
 
 

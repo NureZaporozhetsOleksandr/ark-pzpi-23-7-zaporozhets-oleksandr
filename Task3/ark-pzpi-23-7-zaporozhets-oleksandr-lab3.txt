@@ -1,0 +1,947 @@
+﻿Міністерство освіти і науки України
+Харківський національний університет радіоелектроніки
+Кафедра програмної інженерії
+
+
+
+Звіт
+з лабораторної роботи №3
+з дисципліни «Аналіз та рефакторінг коду»
+на тему «РОЗРОБКА БІЗНЕС-ЛОГІКИ ТА ФУНКЦІЙ АДМІНІСТРУВАННЯ СЕРВЕРНОЇ ЧАСТИНИ ПРОГРАМНОЇ СИСТЕМИ »
+
+
+
+
+
+
+Виконав:                                                                                              Перевірив:
+ст. гр. ПЗПІ 23-7                                                                              Дашенков Д. С.
+Запорожець Олександр Олександрович
+
+
+
+
+
+
+
+
+Харків 2025
+1. Опис інженерних рішень
+      1.1 Архітектура серверної частини
+      Серверна частина системи моніторингу робочого часу співробітників побудована за шаровим підходом. Такий підхід дозволяє розділити логіку за відповідальністю, спростити підтримку та подальший розвиток системи.
+      Виділено такі основні шари:
+       1. Шар контролерів (Controllers).
+      Обробляє HTTP-запити від клієнтів, виконує базову перевірку даних, викликає відповідні сервіси бізнес-логіки та формує HTTP-відповідь у форматі JSON. Для кожної доменної області виділено окремий контролер (автентифікація, користувачі, відмітки часу, графіки роботи, відсутності, звіти, адміністрування).
+       2. Шар бізнес-логіки (Services).
+      Містить правила предметної області: створення та валідація відміток часу, розрахунок відпрацьованих годин, переробок і недопрацювань, обробка заявок на відсутність, формування зведених звітів, виконання адміністративних дій (керування користувачами, зміна ролей, блокування тощо). Контролери не містять складних обчислень — уся «розумна» логіка винесена в сервіси.
+       3. Шар доступу до даних (Data Access / Repository).
+      В окремому модулі зосереджені всі операції з базою даних SQLite: виконання SQL-запитів, отримання та збереження записів, робота з транзакціями. Це зменшує зв’язність системи і дозволяє при необхідності змінити СУБД без переписування всієї логіки.
+      Для обробки запитів додатково використовуються проміжні обробники (middleware):
+       • для перевірки JWT-токена та визначення поточного користувача;
+       • для перевірки ролі (звичайний співробітник, менеджер, адміністратор) перед доступом до захищених ендпоінтів;
+       • для централізованого логування та обробки помилок.
+      Для передачі даних між клієнтом і сервером застосовуються DTO-структури (Data Transfer Object), у яких присутні лише необхідні поля. Завдяки цьому внутрішня структура бази даних не «просочується» назовні, а конфіденційна інформація (наприклад, хеш паролю) ніколи не потрапляє в відповіді API.
+      1.2 Використані технології
+      Серверна частина реалізована з використанням таких технологій та інструментів:
+       • Node.js — середовище виконання JavaScript на стороні сервера;
+       • Express.js — фреймворк для побудови REST API;
+       • SQLite — реляційна база даних, що зберігається у вигляді одного файлу та не потребує окремого серверного процесу;
+       • JSON Web Token (JWT) — для реалізації аутентифікації та авторизації;
+       • bcrypt/bcryptjs — для хешування паролів перед збереженням у базі даних;
+       • CORS — для налаштування доступу до API з боку клієнтських застосунків;
+       • Swagger / OpenAPI — для документування API та інтерактивного тестування запитів;
+      Обраний стек дозволяє швидко розгортати й тестувати серверну частину, а також наочно демонструє реалізацію бізнес-логіки та адміністративних функцій у контексті предметної області обліку робочого часу.
+       1.3 Бізнес-логіка серверної частини
+      Бізнес-логіка системи відповідає за коректну обробку даних, що пов’язані з робочим часом співробітників.
+      Основні напрямки логіки:
+       1. Облік відміток часу (Time Entries).
+      Реалізовано створення й редагування відміток початку/завершення роботи та початку/завершення перерв. Перевіряється коректність послідовності подій (не можна закінчити зміну до її початку, не можна почати нову перерву, не завершивши попередню і т.д.). На основі набору відміток за день обчислюється фактично відпрацьований час.
+       2. Робочі графіки (Work Schedules).
+      Для кожного користувача може бути заданий індивідуальний графік: робочі дні тижня, час початку і завершення зміни, тривалість стандартного робочого дня. Ці дані використовуються для визначення запізнень, переробок і недопрацювань.
+       3. Відсутності (Absences).
+      Користувачі можуть подавати заявки на відсутність (відпустка, лікарняний, відрядження тощо). Бізнес-логіка перевіряє відсутність конфліктів між заявками і робочими днями, а також дозволяє менеджеру або адміністратору погоджувати чи відхиляти такі заявки. Погоджені відсутності враховуються в звітах і не вважаються недопрацюванням.
+       4. Звіти (Reports).
+      Для заданого періоду формується зведена інформація по співробітнику: заплановані години за графіком, фактично відпрацьований час, сумарні переробки й недопрацювання, кількість запізнень, інформація про відсутності. Ці розрахунки виконуються в окремому сервісі й можуть використовуватися для подальшого аналізу або передачі в інші системи.
+       5. Аудит (Audit Logs).
+      Ключові операції (створення та зміна користувачів, зміна ролей, редагування відміток часу, затвердження заявок на відсутність тощо) фіксуються в журналі аудиту. Це дозволяє відстежувати, хто і коли змінив критично важливі дані.
+       1.4 Функції адміністрування серверної частини
+      Функції адміністрування призначені для керування користувачами системи та контролю коректності даних.
+      Адміністратор має можливість:
+      – переглядати список усіх користувачів, фільтрувати їх за роллю та статусом;
+       • створювати нових користувачів і призначати їм ролі;
+       • змінювати ролі та основні параметри облікового запису;
+       • блокувати та розблоковувати користувачів, фіксуючи причину блокування;
+       • переглядати та за необхідності коригувати відмітки часу співробітників;
+       • переглядати та обробляти заявки на відсутність (погодження, відхилення);
+       • переглядати зведену статистику за співробітниками й організацією в цілому;
+       • переглядати журнал аудиту з фільтрацією за датою, користувачем та типом події.
+      Таким чином, серверна частина не лише зберігає дані, але й реалізує повний набір правил та інструментів для контролю робочого часу й адміністрування користувачів.
+      
+2 ФРАГМЕНТИ ПРОГРАМНОГО КОДУ
+У цьому розділі наведені ключові фрагменти коду серверної частини лабораторної роботи. Проєкт реалізовано на Node.js з використанням Express. Дані зберігаються у SQLite, а доступ до API захищено JWT-токеном. Для зручної перевірки ендпоінтів використовується Swagger UI.
+
+   1. Фрагмент коду модуля JWT-автентифікації, middleware та журналу аудиту (src/auth.js):
+const jwt = require('jsonwebtoken');
+const db = require('../db/db');
+
+const JWT_SECRET = 'very_secret_key_123';
+
+function generateToken(user) {
+  return jwt.sign(
+    { id: user.Id, role: user.Role, fullName: user.FullName },
+    JWT_SECRET,
+    { expiresIn: '8h' }
+  );
+}
+
+function authMiddleware(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  if (!authHeader) return res.status(401).json({ message: 'No token provided' });
+  const parts = authHeader.split(' ');
+  if (parts.length !== 2) return res.status(401).json({ message: 'Invalid Authorization header' });
+  const token = parts[1];
+  jwt.verify(token, JWT_SECRET, (err, decoded) => {
+    if (err) return res.status(401).json({ message: 'Invalid token' });
+    req.user = decoded;
+    next();
+  });
+}
+
+function adminMiddleware(req, res, next) {
+  if (!req.user || req.user.role !== 'Admin') {
+    return res.status(403).json({ message: 'Forbidden' });
+  }
+  next();
+}
+
+function logAction(userId, action, entityName, entityId, oldValue, newValue) {
+  const ts = new Date().toISOString();
+  const sql = `
+    INSERT INTO AuditLogs (UserId, Action, EntityName, EntityId, Timestamp, OldValue, NewValue)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `;
+  db.run(
+    sql,
+    [userId || null, action, entityName, entityId || null, ts, oldValue || null, newValue || null],
+    (err) => {
+      if (err) console.error('Audit log error:', err.message);
+    }
+  );
+}
+
+module.exports = {
+  generateToken,
+  authMiddleware,
+  adminMiddleware,
+  logAction
+};
+
+   2. Фрагмент коду контролера керування користувачами (src/controllers/usersController.js):
+const express = require('express');
+const db = require('../../db/db');
+const { logAction } = require('../auth');
+
+const router = express.Router();
+
+router.get('/', (req, res) => {
+  db.all('SELECT Id, FullName, Login, Email, Role, IsActive FROM Users', [], (err, rows) => {
+    if (err) return res.status(500).json({ message: 'DB error' });
+    res.json(rows);
+  });
+});
+
+router.get('/:id', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  db.get(
+    'SELECT Id, FullName, Login, Email, Role, IsActive FROM Users WHERE Id = ?',
+    [id],
+    (err, user) => {
+      if (err) return res.status(500).json({ message: 'DB error' });
+      if (!user) return res.status(404).json({ message: 'User not found' });
+      res.json(user);
+    }
+  );
+});
+
+router.patch('/:id/deactivate', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  db.get('SELECT * FROM Users WHERE Id = ?', [id], (err, user) => {
+    if (err) return res.status(500).json({ message: 'DB error' });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    const oldValue = JSON.stringify({ IsActive: user.IsActive });
+    db.run('UPDATE Users SET IsActive = 0 WHERE Id = ?', [id], function (err) {
+      if (err) return res.status(500).json({ message: 'DB error' });
+      logAction(req.user.id, 'DEACTIVATE_USER', 'Users', id, oldValue, JSON.stringify({ IsActive: 0 }));
+      res.json({ message: 'User deactivated' });
+    });
+  });
+});
+
+module.exports = router;
+
+   3. Фрагмент коду контролера обліку відсутностей (src/controllers/absencesController.js):
+const express = require('express');
+const db = require('../../db/db');
+const { logAction } = require('../auth');
+
+const router = express.Router();
+
+router.post('/', (req, res) => {
+  const { type, dateStart, dateEnd, comment } = req.body;
+  if (!type || !dateStart || !dateEnd) {
+    return res.status(400).json({ message: 'Missing fields' });
+  }
+  const sql = `
+    INSERT INTO AbsenceRecords (UserId, Type, DateStart, DateEnd, Comment)
+    VALUES (?, ?, ?, ?, ?)
+  `;
+  db.run(sql, [req.user.id, type, dateStart, dateEnd, comment || null], function (err) {
+    if (err) return res.status(500).json({ message: 'DB error' });
+    const id = this.lastID;
+    logAction(req.user.id, 'CREATE_ABSENCE', 'AbsenceRecords', id, null, JSON.stringify({ type, dateStart, dateEnd }));
+    res.status(201).json({
+      id,
+      userId: req.user.id,
+      type,
+      dateStart,
+      dateEnd,
+      comment: comment || null
+    });
+  });
+});
+
+router.get('/my', (req, res) => {
+  const { from, to } = req.query;
+  let sql = 'SELECT * FROM AbsenceRecords WHERE UserId = ?';
+  const params = [req.user.id];
+  if (from) {
+    sql += ' AND DateStart >= ?';
+    params.push(from);
+  }
+  if (to) {
+    sql += ' AND DateEnd <= ?';
+    params.push(to);
+  }
+  sql += ' ORDER BY DateStart ASC';
+  db.all(sql, params, (err, rows) => {
+    if (err) return res.status(500).json({ message: 'DB error' });
+    res.json(rows);
+  });
+});
+
+module.exports = router;
+
+   4. Фрагмент коду контролера робочих графіків (src/controllers/schedulesController.js):
+const express = require('express');
+const db = require('../../db/db');
+const { logAction, adminMiddleware } = require('../auth');
+
+const router = express.Router();
+
+router.get('/my', (req, res) => {
+  const sql = `
+    SELECT * FROM WorkSchedules
+    WHERE UserId = ?
+       OR UserId IS NULL
+    ORDER BY CASE WHEN UserId IS NULL THEN 1 ELSE 0 END
+    LIMIT 1
+  `;
+  db.get(sql, [req.user.id], (err, row) => {
+    if (err) return res.status(500).json({ message: 'DB error' });
+    if (!row) return res.status(404).json({ message: 'Schedule not found' });
+    res.json(row);
+  });
+});
+
+router.post('/', adminMiddleware, (req, res) => {
+  const { userId, startWork, endWork, breakMinutes, workingDaysMask } = req.body;
+  if (!startWork || !endWork || !breakMinutes || !workingDaysMask) {
+    return res.status(400).json({ message: 'Missing fields' });
+  }
+  const sql = `
+    INSERT INTO WorkSchedules (UserId, StartWork, EndWork, BreakMinutes, WorkingDaysMask)
+    VALUES (?, ?, ?, ?, ?)
+  `;
+  db.run(sql, [userId || null, startWork, endWork, breakMinutes, workingDaysMask], function (err) {
+    if (err) return res.status(500).json({ message: 'DB error' });
+    const id = this.lastID;
+    logAction(req.user.id, 'CREATE_SCHEDULE', 'WorkSchedules', id, null, JSON.stringify({ userId, startWork, endWork }));
+    res.status(201).json({
+      id,
+      userId: userId || null,
+      startWork,
+      endWork,
+      breakMinutes,
+      workingDaysMask
+    });
+  });
+});
+
+module.exports = router;
+
+   5. Фрагмент коду адміністративного контролера (src/controllers/adminController.js):
+const express = require('express');
+const db = require('../../db/db');
+const { logAction } = require('../auth');
+
+const router = express.Router();
+
+/**
+ * GET /api/admin/users-with-stats?from=2025-01-01&to=2025-01-31
+ * Список користувачів з базовою статистикою за період
+ */
+router.get('/users-with-stats', (req, res) => {
+  const { from, to } = req.query;
+
+  if (!from || !to) {
+    return res.status(400).json({ message: 'Missing from or to' });
+  }
+
+  const sql = `
+    SELECT 
+      u.Id,
+      u.FullName,
+      u.Login,
+      u.Email,
+      u.Role,
+      u.IsActive,
+      COUNT(t.Id) AS timeEntryCount
+    FROM Users u
+    LEFT JOIN TimeEntries t 
+      ON t.UserId = u.Id
+      AND t.StartTime >= ?
+      AND t.StartTime <= ?
+    GROUP BY u.Id
+    ORDER BY u.FullName
+  `;
+
+  db.all(sql, [from, to], (err, rows) => {
+    if (err) {
+      return res.status(500).json({ message: 'DB error (users-with-stats)' });
+    }
+
+    res.json({
+      from,
+      to,
+      items: rows
+    });
+  });
+});
+
+/**
+ * POST /api/admin/users/:id/block
+ * Блокування користувача
+ */
+router.post('/users/:id/block', (req, res) => {
+  const userId = parseInt(req.params.id, 10);
+
+  db.get(
+    'SELECT Id, FullName, Role, IsActive FROM Users WHERE Id = ?',
+    [userId],
+    (err, userRow) => {
+      if (err) {
+        return res.status(500).json({ message: 'DB error (select user)' });
+      }
+      if (!userRow) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+      if (!userRow.IsActive) {
+        return res.status(400).json({ message: 'User already blocked' });
+      }
+
+      const oldValue = JSON.stringify(userRow);
+
+      db.run(
+        'UPDATE Users SET IsActive = 0 WHERE Id = ?',
+        [userId],
+        (err2) => {
+          if (err2) {
+            return res.status(500).json({ message: 'DB error (block user)' });
+          }
+
+          const newValue = JSON.stringify({ ...userRow, IsActive: 0 });
+
+          logAction(
+            req.user.id,
+            'BlockUser',
+            'Users',
+            userId,
+            oldValue,
+            newValue
+          );
+
+          res.json({ message: 'User blocked', userId });
+        }
+      );
+    }
+  );
+});
+
+/**
+ * POST /api/admin/users/:id/unblock
+ * Розблокування користувача
+ */
+router.post('/users/:id/unblock', (req, res) => {
+  const userId = parseInt(req.params.id, 10);
+
+  db.get(
+    'SELECT Id, FullName, Role, IsActive FROM Users WHERE Id = ?',
+    [userId],
+    (err, userRow) => {
+      if (err) {
+        return res.status(500).json({ message: 'DB error (select user)' });
+      }
+      if (!userRow) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+      if (userRow.IsActive) {
+        return res.status(400).json({ message: 'User already active' });
+      }
+
+      const oldValue = JSON.stringify(userRow);
+
+      db.run(
+        'UPDATE Users SET IsActive = 1 WHERE Id = ?',
+        [userId],
+        (err2) => {
+          if (err2) {
+            return res.status(500).json({ message: 'DB error (unblock user)' });
+          }
+
+          const newValue = JSON.stringify({ ...userRow, IsActive: 1 });
+
+          logAction(
+            req.user.id,
+            'UnblockUser',
+            'Users',
+            userId,
+            oldValue,
+            newValue
+          );
+
+          res.json({ message: 'User unblocked', userId });
+        }
+      );
+    }
+  );
+});
+
+/**
+ * PATCH /api/admin/users/:id/role
+ * Зміна ролі користувача
+ * body: { role: 'Admin' | 'Manager' | 'Employee' }
+ */
+router.patch('/users/:id/role', (req, res) => {
+  const userId = parseInt(req.params.id, 10);
+  const { role } = req.body;
+
+  const allowedRoles = ['Admin', 'Manager', 'Employee'];
+  if (!allowedRoles.includes(role)) {
+    return res.status(400).json({ message: 'Invalid role' });
+  }
+
+  db.get(
+    'SELECT Id, FullName, Role, IsActive FROM Users WHERE Id = ?',
+    [userId],
+    (err, userRow) => {
+      if (err) {
+        return res.status(500).json({ message: 'DB error (select user)' });
+      }
+      if (!userRow) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+
+      const oldValue = JSON.stringify(userRow);
+
+      db.run(
+        'UPDATE Users SET Role = ? WHERE Id = ?',
+        [role, userId],
+        (err2) => {
+          if (err2) {
+            return res.status(500).json({ message: 'DB error (change role)' });
+          }
+
+          const newValue = JSON.stringify({ ...userRow, Role: role });
+
+          logAction(
+            req.user.id,
+            'ChangeUserRole',
+            'Users',
+            userId,
+            oldValue,
+            newValue
+          );
+
+          res.json({ message: 'Role updated', userId, role });
+        }
+      );
+    }
+  );
+});
+
+/**
+ * GET /api/admin/system-stats
+ * Загальна статистика системи
+ */
+router.get('/system-stats', (req, res) => {
+  const sql = `
+    SELECT
+      (SELECT COUNT(*) FROM Users WHERE IsActive = 1) AS activeUsers,
+      (SELECT COUNT(*) FROM Users WHERE IsActive = 0) AS blockedUsers,
+      (SELECT COUNT(*) FROM Users) AS totalUsers,
+      (SELECT COUNT(*) FROM TimeEntries) AS totalTimeEntries,
+      (SELECT COUNT(*) FROM AbsenceRecords) AS totalAbsences
+  `;
+
+  db.get(sql, [], (err, row) => {
+    if (err) {
+      return res.status(500).json({ message: 'DB error (system-stats)' });
+    }
+
+    res.json(row);
+  });
+});
+
+module.exports = router;
+
+Фрагмент коду контролера журналу аудиту (src/controllers/auditController.js):
+const express = require('express');
+const db = require('../../db/db');
+
+const router = express.Router();
+
+router.get('/', (req, res) => {
+  const { from, to } = req.query;
+  let sql = 'SELECT * FROM AuditLogs WHERE 1=1';
+  const params = [];
+  if (from) {
+    sql += ' AND Timestamp >= ?';
+    params.push(from);
+  }
+  if (to) {
+    sql += ' AND Timestamp <= ?';
+    params.push(to);
+  }
+  sql += ' ORDER BY Timestamp DESC';
+  db.all(sql, params, (err, rows) => {
+    if (err) return res.status(500).json({ message: 'DB error' });
+    res.json(rows);
+  });
+});
+
+module.exports = router;
+
+2.1 Програмна реалізація бізнес-логіки серверної частини
+Бізнес-логіка звітів винесена в окремий сервіс reportService. Сервіс групує відмітки часу по днях, враховує графік роботи та перерви, а також обробляє відсутності, щоб правильно рахувати планові/фактичні хвилини, запізнення, overtime/undertime.
+   1. Фрагмент коду контролера звітів, який готує дані з БД та викликає reportService (src/services/reportsController.js):
+const express = require('express');
+const db = require('../../db/db');
+const { calculateSummary } = require('./reportService');
+
+const router = express.Router();
+
+const toDateOnly = (value) => {
+  if (!value) return null;
+  const s = String(value);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+};
+
+router.get('/my/summary', (req, res) => {
+  const from = toDateOnly(req.query.from);
+  const to = toDateOnly(req.query.to);
+
+  if (!from || !to) {
+    return res.status(400).json({ message: 'Invalid from/to' });
+  }
+
+  const userId = req.user.id;
+
+  db.get(
+    'SELECT * FROM WorkSchedules WHERE UserId = ?',
+    [userId],
+    (schErr, schedule) => {
+      if (schErr) return res.status(500).json({ message: 'DB error' });
+
+      db.all(
+        `
+          SELECT * FROM TimeEntries
+          WHERE UserId = ?
+            AND date(StartTime) >= date(?)
+            AND date(StartTime) <= date(?)
+          ORDER BY StartTime ASC
+        `,
+        [userId, from, to],
+        (teErr, entries) => {
+          if (teErr) return res.status(500).json({ message: 'DB error' });
+
+          db.all(
+            `
+              SELECT * FROM AbsenceRecords
+              WHERE UserId = ?
+                AND date(DateEnd) >= date(?)
+                AND date(DateStart) <= date(?)
+              ORDER BY DateStart ASC
+            `,
+            [userId, from, to],
+            (abErr, absences) => {
+              if (abErr) return res.status(500).json({ message: 'DB error' });
+
+              const result = calculateSummary(
+                from,
+                to,
+                entries || [],
+                schedule || null,
+                absences || []
+              );
+
+              return res.json(result);
+            }
+          );
+        }
+      );
+    }
+  );
+});
+
+module.exports = router;
+
+   2. Фрагмент коду сервісу розрахунку звіту (src/services/reportService.js):
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+function normalizeDateFromDateObj(d) {
+  const y = d.getFullYear();
+  const m = pad2(d.getMonth() + 1);
+  const day = pad2(d.getDate());
+  return `${y}-${m}-${day}`;
+}
+
+// Важливо: парсимо як локальний час, щоб не було зсувів дня
+function parseLocalDateTime(isoOrText) {
+  if (!isoOrText) return null;
+
+  // якщо формат "YYYY-MM-DD" -> додаємо час
+  if (/^\d{4}-\d{2}-\d{2}$/.test(isoOrText)) {
+    return new Date(`${isoOrText}T00:00:00`);
+  }
+
+  // якщо є "Z" або "+03:00" - Date() буде UTC/offset, це може зсунути день,
+  // але для ЛБ лишаємо: просто парсимо як є.
+  return new Date(isoOrText);
+}
+
+function normalizeDate(isoString) {
+  const d = parseLocalDateTime(isoString);
+  if (!d || isNaN(d.getTime())) return null;
+  return normalizeDateFromDateObj(d);
+}
+
+function groupEntriesByDay(entries) {
+  const map = {};
+  for (const e of entries || []) {
+    const day = normalizeDate(e.StartTime);
+    if (!day) continue;
+    if (!map[day]) map[day] = [];
+    map[day].push(e);
+  }
+
+  for (const day in map) {
+    map[day].sort((a, b) => parseLocalDateTime(a.StartTime) - parseLocalDateTime(b.StartTime));
+  }
+  return map;
+}
+
+function isWorkingDay(dateStr, schedule) {
+  if (!schedule || !schedule.WorkingDaysMask) return true; // fallback
+  const d = parseLocalDateTime(`${dateStr}T00:00:00`);
+  let day = d.getDay(); // 0=Sun..6=Sat
+  day = (day + 6) % 7;  // 0=Mon..6=Sun
+  const mask = String(schedule.WorkingDaysMask);
+  return mask[day] === '1';
+}
+
+function parseTimeToMinutes(timeStr) {
+  if (!timeStr) return 0;
+  const [h, m] = String(timeStr).split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+function getPlannedMinutesForDay(dateStr, schedule) {
+  if (!schedule || !schedule.StartWork || !schedule.EndWork) return 0;
+  if (!isWorkingDay(dateStr, schedule)) return 0;
+
+  const start = parseTimeToMinutes(schedule.StartWork);
+  const end = parseTimeToMinutes(schedule.EndWork);
+  const total = Math.max(0, end - start);
+  const breakMin = Number(schedule.BreakMinutes || 0);
+
+  return Math.max(0, total - breakMin);
+}
+
+// Підрахунок фактичної перерви по подіях у хронологічному порядку
+function calcBreakMinutesFromEntries(entries, startWorkDate, endWorkDate) {
+  let breakStart = null;
+  let total = 0;
+
+  for (const e of entries) {
+    const t = parseLocalDateTime(e.StartTime);
+    if (!t || isNaN(t.getTime())) continue;
+
+    if (e.EntryType === 'StartBreak') {
+      // якщо вже в перерві — ігноруємо зайвий StartBreak
+      if (!breakStart) breakStart = t;
+    } else if (e.EntryType === 'EndBreak') {
+      // якщо не було StartBreak — ігноруємо зайвий EndBreak
+      if (breakStart) {
+        const diff = (t - breakStart) / 60000;
+        if (diff > 0) total += diff;
+        breakStart = null;
+      }
+    }
+  }
+
+  // Якщо перерва не закрилась — закриваємо кінцем роботи
+  if (breakStart) {
+    const diff = (endWorkDate - breakStart) / 60000;
+    if (diff > 0) total += diff;
+  }
+
+  // Обмежимо перерву, щоб не перевищувала весь інтервал
+  const maxPossible = Math.max(0, (endWorkDate - startWorkDate) / 60000);
+  total = Math.min(total, maxPossible);
+
+  return Math.round(total);
+}
+
+function calculateDailyFromEntries(dateStr, entries, schedule, absencesForDay) {
+  const hasAbsence = !!(absencesForDay && absencesForDay.length > 0);
+
+  let plannedMinutes = getPlannedMinutesForDay(dateStr, schedule);
+  if (hasAbsence) {
+    plannedMinutes = 0;
+  }
+
+  if (!entries || entries.length === 0) {
+    return {
+      date: dateStr,
+      plannedMinutes,
+      workedMinutes: 0,
+      overtimeMinutes: 0,
+      undertimeMinutes: 0,
+      isLate: false,
+      lateMinutes: 0,
+      hasAbsence
+    };
+  }
+
+  const startWork = entries.find(e => e.EntryType === 'StartWork');
+  const endWork = [...entries].reverse().find(e => e.EntryType === 'EndWork');
+
+  let workedMinutes = 0;
+  let lateMinutes = 0;
+  let isLate = false;
+
+  if (startWork && endWork) {
+    const startDate = parseLocalDateTime(startWork.StartTime);
+    const endDate = parseLocalDateTime(endWork.StartTime);
+
+    if (startDate && endDate && !isNaN(startDate.getTime()) && !isNaN(endDate.getTime()) && endDate > startDate) {
+      const totalMinutes = Math.round((endDate - startDate) / 60000);
+
+      const breakMinutes = calcBreakMinutesFromEntries(entries, startDate, endDate);
+      workedMinutes = Math.max(0, totalMinutes - breakMinutes);
+
+      // Late рахуємо тільки якщо це робочий день і plannedMinutes > 0
+      if (plannedMinutes > 0 && schedule && schedule.StartWork) {
+        const plannedStart = parseLocalDateTime(`${dateStr}T${schedule.StartWork}:00`);
+        if (plannedStart && startDate > plannedStart) {
+          isLate = true;
+          lateMinutes = Math.round((startDate - plannedStart) / 60000);
+        }
+      }
+    }
+  }
+
+  const overtimeMinutes = plannedMinutes > 0 ? Math.max(0, workedMinutes - plannedMinutes) : 0;
+  const undertimeMinutes = plannedMinutes > 0 ? Math.max(0, plannedMinutes - workedMinutes) : 0;
+
+  return {
+    date: dateStr,
+    plannedMinutes,
+    workedMinutes,
+    overtimeMinutes,
+    undertimeMinutes,
+    isLate,
+    lateMinutes,
+    hasAbsence
+  };
+}
+
+function calculateSummary(from, to, entries, schedule, absences) {
+  const dayMs = 24 * 60 * 60 * 1000;
+
+  const fromDate = parseLocalDateTime(`${from}T00:00:00`);
+  const toDate = parseLocalDateTime(`${to}T00:00:00`);
+  if (!fromDate || !toDate || isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
+    return {
+      from,
+      to,
+      days: [],
+      totals: {
+        totalPlannedMinutes: 0,
+        totalWorkedMinutes: 0,
+        totalOvertimeMinutes: 0,
+        totalUndertimeMinutes: 0,
+        totalLateMinutes: 0,
+        lateDaysCount: 0,
+        daysWithAbsence: 0
+      }
+    };
+  }
+
+  const entriesByDay = groupEntriesByDay(entries || []);
+
+  function getAbsencesForDay(dateStr) {
+    if (!absences) return [];
+    const d = parseLocalDateTime(`${dateStr}T00:00:00`);
+    if (!d || isNaN(d.getTime())) return [];
+    return absences.filter(a => {
+      const start = parseLocalDateTime(a.DateStart);
+      const end = parseLocalDateTime(a.DateEnd);
+      if (!start || !end || isNaN(start.getTime()) || isNaN(end.getTime())) return false;
+      return start <= d && end >= d;
+    });
+  }
+
+  const days = [];
+  const totals = {
+    totalPlannedMinutes: 0,
+    totalWorkedMinutes: 0,
+    totalOvertimeMinutes: 0,
+    totalUndertimeMinutes: 0,
+    totalLateMinutes: 0,
+    lateDaysCount: 0,
+    daysWithAbsence: 0
+  };
+
+  for (let ts = fromDate.getTime(); ts <= toDate.getTime(); ts += dayMs) {
+    const d = new Date(ts);
+    const dateStr = normalizeDateFromDateObj(d);
+
+    const dayEntries = entriesByDay[dateStr] || [];
+    const dayAbsences = getAbsencesForDay(dateStr);
+
+    const daily = calculateDailyFromEntries(dateStr, dayEntries, schedule, dayAbsences);
+    days.push(daily);
+
+    totals.totalPlannedMinutes += daily.plannedMinutes;
+    totals.totalWorkedMinutes += daily.workedMinutes;
+    totals.totalOvertimeMinutes += daily.overtimeMinutes;
+    totals.totalUndertimeMinutes += daily.undertimeMinutes;
+    totals.totalLateMinutes += daily.lateMinutes;
+    if (daily.isLate) totals.lateDaysCount += 1;
+    if (daily.hasAbsence) totals.daysWithAbsence += 1;
+  }
+
+  return { from, to, days, totals };
+}
+
+module.exports = {
+  calculateSummary,
+  calculateDailyFromEntries
+};
+
+3 UML ДІАГРАМИ
+      Цей розділ описує UML-діаграму діяльності для бізнес-логіки формування звіту про робочий час, а також UML-діаграму взаємодії для адміністративних функцій керування користувачами. Обидві діаграми стосуються саме серверної частини та відображають внутрішню логіку обробки HTTP-запитів.
+      3.1 UML-діаграма діяльності для формування зведеного звіту
+      UML-діаграма діяльності відображає послідовність дій, які виконує серверна частина під час формування зведеного звіту за період для поточного користувача. Вхідними даними є діапазон дат (параметри from та to), а виходом – структурований звіт, який містить денні показники та агреговані підсумки.
+      Основні елементи діаграми діяльності:
+       1. початковий вузол (старт процесу обробки запиту);
+       2. дії (Action) на стороні клієнта, контролера, сервісного шару та бази даних;
+       3. розгалуження та перевірки умов (Decision nodes);
+       4. цикли для проходження по днях періоду;
+       5. кінцевий вузол (завершення формування відповіді).
+      Послідовність виконання дій можна описати так:
+       1. Клієнтська частина (або Swagger UI) надсилає HTTP-запит GET /api/reports/my/summary з параметрами from та to.
+       2. Серверна частина отримує запит у контролері звітів (ReportsController).
+       3. Виконується перевірка наявності обов’язкових параметрів from та to. Якщо хоча б один параметр відсутній, формується гілка з помилкою 400 «Missing from or to» і процес завершується.
+       4. Якщо параметри коректні, відбувається виклик проміжного обробника авторизації. На цьому етапі перевіряється JWT-токен, витягується інформація про поточного користувача (його ідентифікатор, роль, статус активності). У випадку неуспішної перевірки формується відповідь 401 «Unauthorized» і виконання завершується.
+       5. Далі контролер формує SQL-запит до таблиці WorkSchedules з метою отримати актуальний робочий графік для поточного користувача: персональний графік або загальний графік за замовчуванням.
+       6. База даних виконує запит і повертає один запис графіка (якщо він існує).
+       7. Після цього контролер виконує SQL-запит до таблиці TimeEntries для отримання всіх відміток часу поточного користувача у межах періоду [from; to].
+       8. База даних повертає список записів із типами EntryType (StartWork, EndWork, StartBreak, EndBreak) та часом StartTime.
+       9. Контролер формує третій SQL-запит до таблиці AbsenceRecords для отримання всіх записів про відсутність, які перетинаються із заданим періодом (наприклад, відпустки, лікарняні).
+       10. База даних повертає список періодів відсутності.
+       11. Отримані дані (графік, відмітки часу, відсутності) передаються до бізнес-логіки у сервісному модулі reportService, де викликається функція calculateSummary(from, to, entries, schedule, absences).
+       12. Усередині сервісу виконується початкове групування відміток часу за днями. На діаграмі це позначається окремою дією «Групування відміток часу по датах».
+       13. Далі запускається цикл по кожному дню періоду від from до to. Для кожного дня виконується підпроцес:
+• отримати відмітки часу за конкретну дату;
+• отримати записи про відсутність, які включають цю дату;
+• обчислити планові хвилини за графіком (з урахуванням робочих днів і тривалості перерв);
+• обчислити фактично відпрацьований час на основі пар StartWork/EndWork та фактичних перерв StartBreak/EndBreak;
+• визначити запізнення (якщо фактичний початок роботи пізніше запланованого);
+• обчислити переробку (overtime) та недопрацювання (undertime) відносно планових хвилин;
+• врахувати, чи була узгоджена відсутність у цей день.
+      Результат денного розрахунку додається до колекції days, а агреговані значення (totals) накопичуються в окремому об’єкті.
+       14. Після завершення циклу формується підсумкова структура звіту, яка містить список денних показників та сукупні значення: totalPlannedMinutes, totalWorkedMinutes, totalOvertimeMinutes, totalUndertimeMinutes, totalLateMinutes, lateDaysCount, daysWithAbsence.
+       15. Контролер отримує результат від сервісу та формує HTTP-відповідь зі статусом 200 і тілом у форматі JSON, що містить поля userId, from, to, days, totals.
+       16. Відповідь повертається клієнту, після чого діаграма діяльності досягає кінцевого вузла.
+      На діаграмі діяльності доцільно виділити окремі «swimlanes» (доріжки) для таких учасників: Клієнт, Контролер звітів, Сервіс звітів, База даних. Це чітко покаже, де саме виконується обробка HTTP-запиту, де – бізнес-логіка, а де – доступ до даних.
+
+      Рис. 3.1 – UML-діаграма діяльності формування зведеного звіту на серверній частині
+      3.2 UML-діаграма взаємодії для адміністративних функцій
+      UML-діаграма взаємодії (sequence diagram) відображає обмін повідомленнями між основними учасниками системи під час виконання адміністративних операцій. У даній роботі розглядається сценарій блокування та розблокування користувача адміністратором, оскільки ці дії добре ілюструють роботу контролера адміністрування, доступ до бази даних та журнал аудиту.
+      Основні учасники діаграми (lifelines):
+       • Admin (адміністратор системи, який працює через Swagger UI або інший клієнт);
+       • Swagger UI / Клієнтський додаток (інтерфейс, з якого надсилаються HTTP-запити);
+       • AuthController (контролер автентифікації);
+       • AdminController (контролер адміністративних функцій);
+       • AuthMiddleware / AdminMiddleware (логіка перевірки токена та ролі
+       • часто зображається як частина запиту до AdminController);
+       • Database (база даних, в якій зберігаються Users, TimeEntries, AbsenceRecords, AuditLogs);
+       • Audit логіка (функція logAction, яка записує зміни до таблиці аудиту).
+      Сценарій взаємодії для блокування користувача можна описати так:
+       1. Адміністратор у Swagger UI спочатку виконує вхід у систему через запит POST /api/auth/login.
+       2. Клієнт надсилає запит до AuthController, який перевіряє облікові дані в базі даних і у випадку успіху повертає JWT-токен. Токен зберігається у Swagger UI для подальших запитів.
+       3. Адміністратор вибирає операцію блокування користувача, наприклад POST /api/admin/users/{id}/block.
+Swagger UI формує HTTP-запит з заголовком Authorization: Bearer <token> та відправляє його на сервер.
+       4. На серверній стороні перед викликом AdminController виконується authMiddleware:
+• перевірка валідності JWT-токена;
+• отримання інформації про поточного користувача (ідентифікатор, роль);
+• у випадку невдачі повертається відповідь 401 «Unauthorized».
+       5. Після успішної авторизації виконується adminMiddleware, який перевіряє роль користувача. Якщо роль не є Admin (або іншою дозволеною для адмін-функцій), повертається відповідь 403 «Forbidden», і запит не доходить до AdminController.
+       6. Якщо роль коректна, запит передається до AdminController, до методу router.post('/users/:id/block', ...). Контролер отримує id користувача, якого треба заблокувати.
+       7. AdminController звертається до бази даних (Database) з запитом SELECT, щоб отримати поточний запис користувача (Id, FullName, Role, IsActive).
+• Якщо користувача не знайдено, формується відповідь 404 «User not found»;
+• Якщо користувач вже заблокований (IsActive = 0), формується відповідь 400 «User already blocked».
+       8. Якщо користувач існує і активний, AdminController виконує SQL-запит UPDATE Users SET IsActive = 0 WHERE Id = ?.
+       9. База даних оновлює статус користувача.
+       10. Після успішного оновлення AdminController формує старе та нове значення об’єкта користувача (oldValue та newValue) і викликає функцію logAction.
+       11. Функція logAction створює запис у таблиці AuditLogs з інформацією про дію (BlockUser), назву сутності (Users), ідентифікатор зміненого запису, а також попередні та нові значення.
+       12. База даних зберігає запис аудиту. Після цього AdminController повертає HTTP-відповідь 200 з повідомленням «User blocked» та ідентифікатором користувача.
+       13. Swagger UI відображає відповідь адміністратора, і сценарій для блокування завершується.
+      Аналогічним чином будується сценарій для розблокування користувача POST /api/admin/users/{id}/unblock:
+       • запит із токеном надсилається до AdminController;
+       • проміжні обробники перевіряють авторизацію та роль;
+       • AdminController читає поточний стан користувача з бази даних;
+       • виконується оновлення IsActive = 1;
+       • через logAction додається запис до аудиту з дією UnblockUser;
+       • клієнт отримує підтвердження «User unblocked».
+      На UML-діаграмі взаємодії доцільно показати послідовні повідомлення у вигляді стрілок:
+       • від Admin до Swagger UI (ініціація дії);
+       • від Swagger UI до /api/auth/login (отримання токена) – опціонально;
+       • від Swagger UI до /api/admin/users/{id}/block;
+       • внутрішні виклики authMiddleware та adminMiddleware;
+       • запити до бази даних (select, update);
+       • виклик logAction та вставка у AuditLogs;
+       • повернення відповіді назад до Swagger UI та відображення результату адміністратору.
+
+      Рисунок 3.2 – UML-діаграма взаємодії під час блокування користувача адміністратором
+
+
+ДОДАТОК А
+Посилання на відеозапис: https://youtu.be/vEcINJ4HepM

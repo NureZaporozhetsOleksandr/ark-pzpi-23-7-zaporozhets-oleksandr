@@ -1,13 +1,18 @@
-const sqlite3 = require('sqlite3').verbose();
+const sqlite3 = require('sqlite3').verbose()
+const path = require('path')
 
-const DB_PATH = './AtarkLabaDB.db';
+const DB_PATH = path.join(__dirname, 'AtarkLaba2DB.db')
 
 const db = new sqlite3.Database(DB_PATH, (err) => {
   if (err) {
-    console.error('DB error:', err.message);
+    console.error('DB open error:', err.message)
   } else {
-    console.log('Connected to SQLite DB');
+    console.log('Connected to SQLite DB:', DB_PATH)
   }
-});
+})
 
-module.exports = db;
+db.serialize(() => {
+  db.run('PRAGMA foreign_keys = ON')
+})
+
+module.exports = db
